@@ -1,27 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import mammoth from "mammoth"
-import { getDocument, GlobalWorkerOptions } from "pdfjs-dist"
-
-// Disable worker for server-side usage
-GlobalWorkerOptions.workerSrc = ""
+import { extractText } from "unpdf"
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY
 
-// Parse PDF using Mozilla's PDF.js
+// Parse PDF using unpdf
 async function parsePDF(arrayBuffer: ArrayBuffer): Promise<string> {
-  const pdf = await getDocument({ data: arrayBuffer, useSystemFonts: true }).promise
-  const textParts: string[] = []
-
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i)
-    const textContent = await page.getTextContent()
-    const pageText = textContent.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .join(" ")
-    textParts.push(pageText)
-  }
-
-  return textParts.join("\n\n")
+  const { text } = await extractText(arrayBuffer)
+  return Array.isArray(text) ? text.join("\n") : text
 }
 
 export async function POST(request: NextRequest) {
