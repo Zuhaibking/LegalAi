@@ -1,11 +1,28 @@
 import { NextRequest, NextResponse } from "next/server"
 import mammoth from "mammoth"
-import { createRequire } from "node:module"
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist"
 
-const require = createRequire(import.meta.url)
-const pdfParse = require("pdf-parse")
+// Disable worker for server-side usage
+GlobalWorkerOptions.workerSrc = ""
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY
+
+// Parse PDF using Mozilla's PDF.js
+async function parsePDF(arrayBuffer: ArrayBuffer): Promise<string> {
+  const pdf = await getDocument({ data: arrayBuffer, useSystemFonts: true }).promise
+  const textParts: string[] = []
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i)
+    const textContent = await page.getTextContent()
+    const pageText = textContent.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .join(" ")
+    textParts.push(pageText)
+  }
+
+  return textParts.join("\n\n")
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     if (!OPENAI_API_KEY) {
       return NextResponse.json(
-        { error: "OpenAI API configuration is missing" },
+        { error: "OpenAI API key is missing" },
         { status: 500 }
       )
     }
@@ -42,12 +59,10 @@ export async function POST(request: NextRequest) {
       // Handle .txt files
       documentText = await file.text()
     } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-      // Handle PDF files - extract text using pdf-parse
+      // Handle PDF files - extract text using PDF.js
       try {
         const arrayBuffer = await file.arrayBuffer()
-        const buffer = Buffer.from(arrayBuffer)
-        const pdfData = await pdfParse(buffer)
-        documentText = pdfData.text
+        documentText = await parsePDF(arrayBuffer)
         
         if (!documentText || documentText.trim().length < 50) {
           return NextResponse.json(
@@ -181,10 +196,12 @@ CRITICAL RULES:
 
 Remember: Your goal is to make legal documents understandable for everyone, not to replace professional legal counsel.`
 
-    let messages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }>
+    type MessageContent = string | Array<{ type: string; text?: string; image_url?: { url: string } }>
+    
+    let messages: Array<{ role: string; content: MessageContent }>
 
     if (useVisionAPI) {
-      // Use GPT-4o vision for PDFs and images (OCR)
+      // Use GPT-4o vision for images (OCR)
       messages = [
         { role: "system", content: systemMessage },
         {
@@ -192,16 +209,16 @@ Remember: Your goal is to make legal documents understandable for everyone, not 
           content: [
             {
               type: "text",
-              text: "Please analyze this legal document. First, carefully extract and read all text from the document (including any scanned or image-based content using OCR). Then provide the structured analysis as specified."
+              text: "Please analyze this legal document. First, carefully extract and read all text from the document (including any scanned or image-based content using OCR). Then provide the structured analysis as specified.",
             },
             {
               type: "image_url",
               image_url: {
-                url: `data:${mimeType};base64,${fileBase64}`
-              }
-            }
-          ]
-        }
+                url: `data:${mimeType};base64,${fileBase64}`,
+              },
+            },
+          ],
+        },
       ]
     } else {
       // Text-based document analysis
@@ -209,8 +226,8 @@ Remember: Your goal is to make legal documents understandable for everyone, not 
         { role: "system", content: systemMessage },
         {
           role: "user",
-          content: `Analyze the following document text and explain it in clear, simple English:\n\n---\n${documentText}\n---\n\nProvide the structured analysis as specified.`
-        }
+          content: `Analyze the following document text and explain it in clear, simple English:\n\n---\n${documentText}\n---\n\nProvide the structured analysis as specified.`,
+        },
       ]
     }
 
@@ -218,13 +235,13 @@ Remember: Your goal is to make legal documents understandable for everyone, not 
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: useVisionAPI ? "gpt-4o-mini" : "gpt-4o-mini",
+        model: "gpt-4o",
         messages: messages,
         temperature: 0.4,
-        max_tokens: 4096,
+        max_tokens: 16384,
       }),
     })
 
@@ -239,7 +256,7 @@ Remember: Your goal is to make legal documents understandable for everyone, not 
 
     const data = await response.json()
 
-    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+    if (!data.choices?.[0]?.message) {
       console.error("Invalid OpenAI response:", data)
       return NextResponse.json(
         { error: "Invalid response format from AI" },

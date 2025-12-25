@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
 
     if (!OPENAI_API_KEY) {
       return NextResponse.json(
-        { error: "OpenAI API configuration is missing" },
+        { error: "OpenAI API key is missing" },
         { status: 500 }
       )
     }
@@ -112,24 +112,26 @@ You can:
 - Explain court procedures, police processes, and government compliances.`
     }
 
-    // Prepend system message to the conversation
-    const openaiMessages = [systemMessage, ...messages.map((msg: { role: string; content: string }) => ({
-      role: msg.role,
-      content: msg.content
-    }))]
+    // Build messages array with system message
+    const openaiMessages = [
+      systemMessage,
+      ...messages.map((msg: { role: string; content: string }) => ({
+        role: msg.role,
+        content: msg.content,
+      })),
+    ]
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "gpt-4o",
         messages: openaiMessages,
         temperature: 0.7,
-        max_tokens: 4096,
-        top_p: 0.95,
+        max_tokens: 16384,
       }),
     })
 
@@ -144,7 +146,7 @@ You can:
 
     const data = await response.json()
 
-    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+    if (!data.choices?.[0]?.message) {
       console.error("Invalid OpenAI response:", data)
       return NextResponse.json(
         { error: "Invalid response format from AI" },
