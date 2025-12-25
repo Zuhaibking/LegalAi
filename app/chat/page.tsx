@@ -1,25 +1,19 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { Card } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { 
   Send, 
   Scale, 
   Loader2, 
   Bot, 
   User,
-  Trash2,
-  ArrowLeft,
-  Sparkles,
   Mic,
   MicOff,
-  Upload,
-  FileText,
+  Plus,
   X,
-  CheckCircle2
+  FileText,
+  Image as ImageIcon,
+  Paperclip,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
@@ -39,6 +33,11 @@ interface UploadedDocument {
   size: number
   type: string
   content?: string
+  extractedText?: string
+  isImage?: boolean
+  isPdf?: boolean
+  preview?: string
+  file?: File
 }
 
 interface SpeechRecognition extends EventTarget {
@@ -89,61 +88,71 @@ export default function ChatPage() {
   const [isListening, setIsListening] = useState(false)
   const [uploadedDocs, setUploadedDocs] = useState<UploadedDocument[]>([])
   const [isUploading, setIsUploading] = useState(false)
+  const [showAttachMenu, setShowAttachMenu] = useState(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
-  
-  // Document analysis state
-  const [documentAnalysis, setDocumentAnalysis] = useState<string | null>(null)
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [analysisError, setAnalysisError] = useState<string | null>(null)
-  const [analyzedFileName, setAnalyzedFileName] = useState<string | null>(null)
-  const documentFileInputRef = useRef<HTMLInputElement>(null)
+  const attachMenuRef = useRef<HTMLDivElement>(null)
 
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
-    // Auto-scroll to bottom when new messages arrive
     if (scrollAreaRef.current) {
       scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight
     }
   }, [messages])
 
+  // Focus input on mount
   useEffect(() => {
-    // Auto-focus textarea on mount
     textareaRef.current?.focus()
   }, [])
 
-  // Initialize Speech Recognition
+  // Close attach menu when clicking outside
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'webkitSpeechRecognition' in window) {
-      const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
-      const recognition = new SpeechRecognition() as SpeechRecognition
-      recognition.continuous = false
-      recognition.interimResults = true
-      recognition.lang = 'en-US'
-
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
-        const transcript = Array.from(event.results)
-          .map(result => result[0].transcript)
-          .join('')
-        setInput(transcript)
+    const handleClickOutside = (event: MouseEvent) => {
+      if (attachMenuRef.current && !attachMenuRef.current.contains(event.target as Node)) {
+        setShowAttachMenu(false)
       }
-
-      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-        console.error('Speech recognition error:', event.error)
-        setIsListening(false)
-      }
-
-      recognition.onend = () => {
-        setIsListening(false)
-      }
-
-      recognitionRef.current = recognition
     }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
 
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop()
+  // Initialize speech recognition
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const SpeechRecognitionAPI = (window as Window & { 
+        SpeechRecognition?: new () => SpeechRecognition
+        webkitSpeechRecognition?: new () => SpeechRecognition 
+      }).SpeechRecognition || (window as Window & { 
+        SpeechRecognition?: new () => SpeechRecognition
+        webkitSpeechRecognition?: new () => SpeechRecognition 
+      }).webkitSpeechRecognition
+      
+      if (SpeechRecognitionAPI) {
+        const recognition = new SpeechRecognitionAPI()
+        recognition.continuous = true
+        recognition.interimResults = true
+        recognition.lang = "en-IN"
+
+        recognition.onresult = (event: SpeechRecognitionEvent) => {
+          let transcript = ""
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            transcript += event.results[i][0].transcript
+          }
+          setInput(prev => prev + transcript)
+        }
+
+        recognition.onerror = () => {
+          setIsListening(false)
+        }
+
+        recognition.onend = () => {
+          setIsListening(false)
+        }
+
+        recognitionRef.current = recognition
       }
     }
   }, [])
@@ -167,34 +176,53 @@ export default function ChatPage() {
     if (!files || files.length === 0) return
 
     setIsUploading(true)
+    setShowAttachMenu(false)
     const newDocs: UploadedDocument[] = []
 
     for (const file of Array.from(files)) {
       try {
-        // Read file content
-        const text = await readFileAsText(file)
+        const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
+        const isDocx = file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || file.name.toLowerCase().endsWith(".docx")
+        const isImageFile = file.type.startsWith("image/")
         
         const doc: UploadedDocument = {
           id: Date.now().toString() + Math.random(),
           name: file.name,
           size: file.size,
           type: file.type,
-          content: text
+          isImage: isImageFile,
+          isPdf: isPdf,
+          file: file,
         }
+
+        if (isImageFile) {
+          // Create preview for images
+          const reader = new FileReader()
+          const preview = await new Promise<string>((resolve) => {
+            reader.onload = (e) => resolve(e.target?.result as string)
+            reader.readAsDataURL(file)
+          })
+          doc.preview = preview
+          doc.content = preview
+        } else if (!isPdf && !isDocx) {
+          // Read text content for plain text files only
+          const text = await readFileAsText(file)
+          doc.content = text
+        }
+        
         newDocs.push(doc)
       } catch (error) {
-        console.error('Error reading file:', error)
-        setError('Failed to read file. Please try again.')
+        console.error("Error reading file:", error)
+        setError("Failed to read file. Please try again.")
       }
     }
 
     setUploadedDocs(prev => [...prev, ...newDocs])
     setIsUploading(false)
     
-    // Clear file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
+    // Clear file inputs
+    if (fileInputRef.current) fileInputRef.current.value = ""
+    if (imageInputRef.current) imageInputRef.current.value = ""
   }
 
   const readFileAsText = (file: File): Promise<string> => {
@@ -206,92 +234,87 @@ export default function ChatPage() {
     })
   }
 
-  // Document analysis handler
-  const handleDocumentAnalysis = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-
-    // Check file type
-    const validTypes = [
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "text/plain",
-      "application/pdf",
-      "image/png",
-      "image/jpeg",
-      "image/jpg",
-      "image/webp"
-    ]
-    const validExtensions = [".docx", ".txt", ".pdf", ".png", ".jpg", ".jpeg", ".webp"]
-    const isValidType = validTypes.includes(file.type) || 
-                       validExtensions.some(ext => file.name.toLowerCase().endsWith(ext))
-
-    if (!isValidType) {
-      setAnalysisError("Please upload a .txt, .docx, .pdf, or image file")
-      return
-    }
-
-    setIsAnalyzing(true)
-    setAnalysisError(null)
-    setDocumentAnalysis(null)
-    setAnalyzedFileName(file.name)
-
-    try {
-      const formData = new FormData()
-      formData.append("file", file)
-
-      const response = await fetch("/api/analyze-document", {
-        method: "POST",
-        body: formData,
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || "Failed to analyze document")
-      }
-
-      const data = await response.json()
-      setDocumentAnalysis(data.analysis)
-    } catch (err) {
-      setAnalysisError(err instanceof Error ? err.message : "Failed to analyze document")
-      console.error("Document analysis error:", err)
-    } finally {
-      setIsAnalyzing(false)
-      // Clear file input
-      if (documentFileInputRef.current) {
-        documentFileInputRef.current.value = ""
-      }
-    }
-  }
-
   const removeDocument = (id: string) => {
     setUploadedDocs(prev => prev.filter(doc => doc.id !== id))
   }
 
-  const handleSend = async () => {
-    if ((!input.trim() && uploadedDocs.length === 0) || isLoading) return
+  // Analyze document using the analyze-document API endpoint
+  const analyzeDocument = async (file: File): Promise<string> => {
+    const formData = new FormData()
+    formData.append("file", file)
 
-    let messageContent = input.trim()
+    const response = await fetch("/api/analyze-document", {
+      method: "POST",
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || "Failed to analyze document")
+    }
+
+    const data = await response.json()
+    return data.analysis
+  }
+
+  const handleSend = async () => {
+    const userQuery = input.trim()
+    const hasDocuments = uploadedDocs.length > 0
     
-    // Include document content if documents are uploaded
-    if (uploadedDocs.length > 0) {
-      const docSummary = uploadedDocs.map(doc => 
-        `\n\n[Document: ${doc.name}]\n${doc.content?.substring(0, 2000)}...`
-      ).join('\n\n')
-      messageContent = `${messageContent}\n\n${docSummary}`
+    // Must have either text or documents
+    if (!userQuery && !hasDocuments) return
+    if (isLoading) return
+
+    // Clear input immediately
+    setInput("")
+    setIsLoading(true)
+    setError(null)
+    
+    // Store docs before clearing
+    const docsToProcess = [...uploadedDocs]
+    setUploadedDocs([])
+
+    let messageContent = userQuery
+    let analyzedContent = ""
+
+    // Process uploaded documents if any
+    if (docsToProcess.length > 0) {
+      try {
+        for (const doc of docsToProcess) {
+          // For PDFs, images, and DOCX - use the analyze-document endpoint
+          if (doc.file && (doc.isPdf || doc.isImage || doc.type.includes("wordprocessingml"))) {
+            console.log("Analyzing document:", doc.name)
+            const analysis = await analyzeDocument(doc.file)
+            analyzedContent += `\n\n--- Document: ${doc.name} ---\n${analysis}`
+          } else if (doc.content && !doc.isImage && !doc.isPdf) {
+            // For plain text files, use the content directly
+            analyzedContent += `\n\n--- Document: ${doc.name} ---\n${doc.content.substring(0, 5000)}`
+          }
+        }
+      } catch (err) {
+        console.error("Document analysis error:", err)
+        setError(err instanceof Error ? err.message : "Failed to analyze document")
+        setIsLoading(false)
+        return
+      }
+    }
+
+    // Build the full message content with analyzed documents
+    if (analyzedContent) {
+      messageContent = userQuery 
+        ? `${userQuery}\n\nPlease analyze the following document(s) in context of my question:${analyzedContent}`
+        : `Please analyze the following document(s) and provide a detailed summary with key legal points:${analyzedContent}`
     }
 
     const userMessage: Message = {
       id: Date.now().toString(),
       role: "user",
-      content: messageContent,
+      content: userQuery || "Analyze uploaded document(s)",
       timestamp: new Date(),
-      documents: uploadedDocs.map(doc => doc.name)
+      documents: docsToProcess.map(doc => doc.name)
     }
 
     setMessages((prev) => [...prev, userMessage])
-    setInput("")
-    setIsLoading(true)
-    setError(null)
 
     try {
       const response = await fetch("/api/chat", {
@@ -300,7 +323,7 @@ export default function ChatPage() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          messages: [...messages, userMessage].map((msg) => ({
+          messages: [...messages, { role: "user", content: messageContent }].map((msg) => ({
             role: msg.role,
             content: msg.content,
           })),
@@ -321,9 +344,6 @@ export default function ChatPage() {
       }
 
       setMessages((prev) => [...prev, assistantMessage])
-      
-      // Clear uploaded documents after sending
-      setUploadedDocs([])
     } catch (err) {
       setError("Failed to get response. Please try again.")
       console.error("Chat error:", err)
@@ -339,493 +359,338 @@ export default function ChatPage() {
     }
   }
 
-  const clearChat = () => {
-    setMessages([])
-    setError(null)
-    setUploadedDocs([])
-  }
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto"
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 200) + "px"
+    }
+  }, [input])
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#0a0a0f]">
-      {/* Header */}
-      <header className="glass border-b border-blue-500/30 sticky top-0 z-50">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <Link href="/">
-                <Button variant="ghost" size="sm" className="gap-2 text-gray-300 hover:text-white hover:bg-blue-500/10">
-                  <ArrowLeft className="h-4 w-4" />
-                  Back
-                </Button>
-              </Link>
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full" />
-                  <Scale className="h-6 w-6 text-blue-400 relative z-10" />
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-lg font-bold text-white neon-blue">LexAI</span>
-                  <span className="text-xs text-blue-300/80">Indian Legal Advisor</span>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="glass-light border-emerald-500/30 text-emerald-300">
-                <Sparkles className="h-3 w-3 mr-1 animate-pulse-glow" />
-                GPT-4o
-              </Badge>
-              {messages.length > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={clearChat}
-                  className="gap-2 glass-light border-blue-500/30 text-gray-300 hover:text-white hover:border-blue-400/50"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Clear
-                </Button>
-              )}
-            </div>
-          </div>
+    <div className="min-h-screen flex flex-col bg-[#212121]">
+      {/* Minimal Header */}
+      <header className="fixed top-0 left-0 right-0 z-50 bg-[#212121]/80 backdrop-blur-md border-b border-white/5">
+        <div className="flex items-center justify-between px-4 h-14">
+          <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+            <Scale className="h-6 w-6 text-white" />
+            <span className="text-lg font-semibold text-white">LexAI</span>
+          </Link>
         </div>
       </header>
 
-      {/* Main Content Area - Split Layout */}
-      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        {/* Chat Section */}
-        <div className="flex-1 flex flex-col overflow-hidden lg:border-r border-blue-500/30">
-          <div className="flex-1 overflow-y-auto" ref={scrollAreaRef}>
-          <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 max-w-4xl">
-            {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center">
-                <div className="relative mb-6 animate-float">
-                  <div className="absolute inset-0 bg-blue-500/20 blur-2xl rounded-full" />
-                  <div className="w-20 h-20 rounded-full glass-card flex items-center justify-center relative z-10">
-                    <Scale className="h-10 w-10 text-blue-400" />
-                  </div>
-                </div>
-                <h2 className="text-3xl font-bold text-white neon-blue mb-4">
-                  Welcome to LexAI
-                </h2>
-                <p className="text-lg text-gray-300 mb-2 max-w-2xl">
-                  Your Ultimate Indian Legal Advisor
-                </p>
-                <p className="text-gray-400 mb-8 max-w-xl">
-                  Ask me anything about Indian laws, acts, sections, case laws, or legal procedures. 
-                  I can help you understand your rights, draft legal documents, and guide you through legal processes.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl">
-                  {[
-                    { title: "Tenant Rights", desc: "Security deposit issues", query: "What are my rights if my landlord refuses to return my security deposit?" },
-                    { title: "Consumer Rights", desc: "File a complaint", query: "How to file a consumer complaint?" },
-                    { title: "IPC Section", desc: "Section 498A explained", query: "What is Section 498A of IPC?" },
-                    { title: "RTI Application", desc: "Draft RTI request", query: "How to draft an RTI application?" }
-                  ].map((prompt, idx) => (
-                    <Card 
-                      key={idx}
-                      className="p-4 glass-card border-blue-500/20 hover:border-blue-400/40 hover-glow hover-lift transition-all cursor-pointer group"
-                      onClick={() => setInput(prompt.query)}
-                    >
-                      <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 rounded-lg glass-light flex items-center justify-center shrink-0 group-hover:bg-blue-500/20 transition-colors">
-                          <User className="h-4 w-4 text-blue-400" />
-                        </div>
-                        <div className="text-left">
-                          <p className="font-medium text-white text-sm mb-1">{prompt.title}</p>
-                          <p className="text-xs text-gray-400">{prompt.desc}</p>
-                        </div>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={cn(
-                      "flex gap-4 animate-fade-in",
-                      message.role === "user" ? "justify-end" : "justify-start"
-                    )}
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col pt-14">
+        {/* Messages Area */}
+        <div 
+          ref={scrollAreaRef}
+          className="flex-1 overflow-y-auto"
+        >
+          {messages.length === 0 ? (
+            /* Welcome Screen */
+            <div className="flex flex-col items-center justify-center min-h-[calc(100vh-180px)] px-4">
+              <h1 className="text-3xl md:text-4xl font-medium text-white mb-8 text-center">
+                What legal question do you have today?
+              </h1>
+              
+              {/* Quick Suggestions */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
+                {[
+                  { icon: "📜", text: "Explain tenant rights in India" },
+                  { icon: "⚖️", text: "How to file a consumer complaint?" },
+                  { icon: "📋", text: "What is Section 498A of IPC?" },
+                  { icon: "📝", text: "Help me draft an RTI application" },
+                ].map((suggestion, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setInput(suggestion.text)}
+                    className="flex items-center gap-3 px-4 py-3 bg-[#2f2f2f] hover:bg-[#3a3a3a] rounded-xl text-left transition-colors border border-white/5"
                   >
-                    {message.role === "assistant" && (
-                      <div className="w-10 h-10 rounded-full glass-card flex items-center justify-center shrink-0 border border-blue-500/30">
-                        <Bot className="h-5 w-5 text-blue-400" />
-                      </div>
-                    )}
-                    <Card
-                      className={cn(
-                        "max-w-[85%] md:max-w-[75%] p-4",
-                        message.role === "user"
-                          ? "glass-card border-blue-500/30 bg-blue-500/10"
-                          : "glass-card border-blue-500/20"
-                      )}
-                    >
-                      {message.role === "assistant" ? (
-                        <div className="prose prose-sm max-w-none prose-invert">
-                          <ReactMarkdown
-                            components={{
-                              h1: ({ children }) => (
-                                <h1 className="text-xl font-bold text-white mb-2 neon-blue">{children}</h1>
-                              ),
-                              h2: ({ children }) => (
-                                <h2 className="text-lg font-bold text-white mb-2 mt-4 neon-blue">{children}</h2>
-                              ),
-                              h3: ({ children }) => (
-                                <h3 className="text-base font-bold text-blue-300 mb-2 mt-3">{children}</h3>
-                              ),
-                              p: ({ children }) => (
-                                <p className="text-gray-300 mb-3 leading-relaxed">{children}</p>
-                              ),
-                              ul: ({ children }) => (
-                                <ul className="list-disc list-inside mb-3 space-y-1 text-gray-300">{children}</ul>
-                              ),
-                              ol: ({ children }) => (
-                                <ol className="list-decimal list-inside mb-3 space-y-1 text-gray-300">{children}</ol>
-                              ),
-                              li: ({ children }) => (
-                                <li className="text-gray-300">{children}</li>
-                              ),
-                              strong: ({ children }) => (
-                                <strong className="font-semibold text-white">{children}</strong>
-                              ),
-                              a: ({ href, children }) => (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-400 hover:text-blue-300 underline"
-                                >
-                                  {children}
-                                </a>
-                              ),
-                              hr: () => <hr className="my-4 border-blue-500/30" />,
-                              code: ({ children }) => (
-                                <code className="glass-light px-1 py-0.5 rounded text-sm text-blue-300">
-                                  {children}
-                                </code>
-                              ),
-                              pre: ({ children }) => (
-                                <pre className="glass-light p-3 rounded overflow-x-auto mb-3">
-                                  {children}
-                                </pre>
-                              ),
-                            }}
-                          >
-                            {message.content}
-                          </ReactMarkdown>
-                        </div>
-                      ) : (
-                        <div>
-                          <p className="text-gray-200">{message.content.split('\n\n[Document:')[0]}</p>
-                          {message.documents && message.documents.length > 0 && (
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {message.documents.map((doc, idx) => (
-                                <Badge key={idx} variant="outline" className="glass-light border-blue-500/30 text-blue-300 text-xs">
-                                  <FileText className="h-3 w-3 mr-1" />
-                                  {doc}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <p className={cn(
-                        "text-xs mt-2",
-                        message.role === "user" ? "text-gray-400" : "text-gray-500"
-                      )}>
-                        {message.timestamp.toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </p>
-                    </Card>
-                    {message.role === "user" && (
-                      <div className="w-10 h-10 rounded-full glass-card flex items-center justify-center shrink-0 border border-blue-500/30 bg-blue-500/10">
-                        <User className="h-5 w-5 text-blue-400" />
-                      </div>
-                    )}
-                  </div>
-                ))}
-                {isLoading && (
-                  <div className="flex gap-4 justify-start">
-                    <div className="w-10 h-10 rounded-full glass-card flex items-center justify-center shrink-0 border border-blue-500/30">
-                      <Bot className="h-5 w-5 text-blue-400" />
-                    </div>
-                    <Card className="glass-card border-blue-500/20 p-4">
-                      <div className="flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
-                        <span className="text-gray-300">LexAI is thinking...</span>
-                      </div>
-                    </Card>
-                  </div>
-                )}
-                {error && (
-                  <div className="flex gap-4 justify-start">
-                    <Card className="glass-card border-red-500/30 bg-red-500/10 p-4">
-                      <p className="text-red-400 text-sm">{error}</p>
-                    </Card>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Uploaded Documents Display */}
-        {uploadedDocs.length > 0 && (
-          <div className="border-t border-blue-500/30 glass-light px-4 py-3">
-            <div className="container mx-auto max-w-4xl">
-              <div className="flex items-center gap-2 mb-2">
-                <FileText className="h-4 w-4 text-blue-400" />
-                <span className="text-sm font-medium text-gray-300">Uploaded Documents:</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {uploadedDocs.map((doc) => (
-                  <Badge
-                    key={doc.id}
-                    variant="outline"
-                    className="glass-light border-blue-500/30 text-gray-300 pr-2"
-                  >
-                    <FileText className="h-3 w-3 mr-1 text-blue-400" />
-                    {doc.name}
-                    <button
-                      onClick={() => removeDocument(doc.id)}
-                      className="ml-2 hover:text-red-400 transition-colors"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
+                    <span className="text-xl">{suggestion.icon}</span>
+                    <span className="text-sm text-gray-300">{suggestion.text}</span>
+                  </button>
                 ))}
               </div>
             </div>
-          </div>
-        )}
+          ) : (
+            /* Messages List */
+            <div className="max-w-3xl mx-auto w-full px-4 py-6 space-y-6">
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={cn(
+                    "flex gap-4",
+                    message.role === "user" ? "justify-end" : "justify-start"
+                  )}
+                >
+                  {message.role === "assistant" && (
+                    <div className="w-8 h-8 rounded-full bg-[#19c37d] flex items-center justify-center shrink-0">
+                      <Bot className="h-5 w-5 text-white" />
+                    </div>
+                  )}
+                  
+                  <div
+                    className={cn(
+                      "max-w-[85%] md:max-w-[80%] rounded-2xl px-4 py-3",
+                      message.role === "user"
+                        ? "bg-[#2f2f2f] text-white"
+                        : "bg-transparent"
+                    )}
+                  >
+                    {message.role === "assistant" ? (
+                      <div className="prose prose-invert prose-sm max-w-none">
+                        <ReactMarkdown
+                          components={{
+                            h1: ({ children }) => (
+                              <h1 className="text-xl font-bold text-white mb-3">{children}</h1>
+                            ),
+                            h2: ({ children }) => (
+                              <h2 className="text-lg font-bold text-white mb-2 mt-4">{children}</h2>
+                            ),
+                            h3: ({ children }) => (
+                              <h3 className="text-base font-semibold text-white mb-2 mt-3">{children}</h3>
+                            ),
+                            p: ({ children }) => (
+                              <p className="text-gray-200 mb-3 leading-relaxed">{children}</p>
+                            ),
+                            ul: ({ children }) => (
+                              <ul className="list-disc list-outside ml-4 mb-3 space-y-1 text-gray-200">{children}</ul>
+                            ),
+                            ol: ({ children }) => (
+                              <ol className="list-decimal list-outside ml-4 mb-3 space-y-1 text-gray-200">{children}</ol>
+                            ),
+                            li: ({ children }) => (
+                              <li className="text-gray-200">{children}</li>
+                            ),
+                            strong: ({ children }) => (
+                              <strong className="font-semibold text-white">{children}</strong>
+                            ),
+                            a: ({ href, children }) => (
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[#19c37d] hover:underline"
+                              >
+                                {children}
+                              </a>
+                            ),
+                            hr: () => <hr className="my-4 border-white/10" />,
+                            code: ({ children }) => (
+                              <code className="bg-[#2f2f2f] px-1.5 py-0.5 rounded text-sm text-gray-200">
+                                {children}
+                              </code>
+                            ),
+                            pre: ({ children }) => (
+                              <pre className="bg-[#2f2f2f] p-4 rounded-lg overflow-x-auto mb-3">
+                                {children}
+                              </pre>
+                            ),
+                          }}
+                        >
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-gray-100 whitespace-pre-wrap">{message.content.split("\n\n[Document:")[0]}</p>
+                        {message.documents && message.documents.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {message.documents.map((doc, idx) => (
+                              <span key={idx} className="inline-flex items-center gap-1 text-xs text-gray-400 bg-white/5 px-2 py-1 rounded">
+                                <FileText className="h-3 w-3" />
+                                {doc}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {message.role === "user" && (
+                    <div className="w-8 h-8 rounded-full bg-[#5436DA] flex items-center justify-center shrink-0">
+                      <User className="h-5 w-5 text-white" />
+                    </div>
+                  )}
+                </div>
+              ))}
+              
+              {/* Loading indicator */}
+              {isLoading && (
+                <div className="flex gap-4 justify-start">
+                  <div className="w-8 h-8 rounded-full bg-[#19c37d] flex items-center justify-center shrink-0">
+                    <Bot className="h-5 w-5 text-white" />
+                  </div>
+                  <div className="flex items-center gap-2 text-gray-400">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Thinking...</span>
+                  </div>
+                </div>
+              )}
+              
+              {/* Error message */}
+              {error && (
+                <div className="flex justify-center">
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2">
+                    <p className="text-red-400 text-sm">{error}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
-        {/* Input Area */}
-        <div className="border-t border-blue-500/30 glass">
-          <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 max-w-4xl">
-            <div className="flex gap-3 items-end">
-              {/* File Upload Button */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept=".pdf,.doc,.docx,.txt"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading || isUploading}
-                className="glass-light border-blue-500/30 text-gray-300 hover:text-white hover:border-blue-400/50 h-[60px] px-4"
-              >
-                {isUploading ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <Upload className="h-5 w-5" />
-                )}
-              </Button>
+        {/* Input Area - Fixed at Bottom */}
+        <div className="sticky bottom-0 bg-gradient-to-t from-[#212121] via-[#212121] to-transparent pt-6 pb-4 px-4">
+          <div className="max-w-3xl mx-auto w-full">
+            {/* Uploaded files preview */}
+            {uploadedDocs.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {uploadedDocs.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="flex items-center gap-2 bg-[#2f2f2f] rounded-lg px-3 py-2 text-sm"
+                  >
+                    {doc.isImage ? (
+                      <ImageIcon className="h-4 w-4 text-gray-400" />
+                    ) : (
+                      <FileText className="h-4 w-4 text-gray-400" />
+                    )}
+                    <span className="text-gray-300 max-w-[150px] truncate">{doc.name}</span>
+                    <button
+                      onClick={() => removeDocument(doc.id)}
+                      className="text-gray-500 hover:text-white transition-colors"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
-              {/* Voice Input Button */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={isListening ? stopListening : startListening}
-                disabled={isLoading || !recognitionRef.current}
-                className={cn(
-                  "glass-light border-blue-500/30 h-[60px] px-4 transition-all",
-                  isListening
-                    ? "border-red-500/50 text-red-400 hover:border-red-400/70 animate-pulse-glow"
-                    : "text-gray-300 hover:text-white hover:border-blue-400/50"
-                )}
-              >
-                {isListening ? (
-                  <MicOff className="h-5 w-5" />
-                ) : (
-                  <Mic className="h-5 w-5" />
-                )}
-              </Button>
+            {/* Input container */}
+            <div className="relative bg-[#2f2f2f] rounded-3xl border border-white/10 focus-within:border-white/20 transition-colors">
+              <div className="flex items-end gap-2 p-2">
+                {/* Attachment button with menu */}
+                <div className="relative" ref={attachMenuRef}>
+                  <button
+                    onClick={() => setShowAttachMenu(!showAttachMenu)}
+                    className={cn(
+                      "p-2 rounded-full hover:bg-white/10 transition-colors",
+                      showAttachMenu && "bg-white/10"
+                    )}
+                    disabled={isLoading || isUploading}
+                  >
+                    {isUploading ? (
+                      <Loader2 className="h-5 w-5 text-gray-400 animate-spin" />
+                    ) : (
+                      <Plus className="h-5 w-5 text-gray-400" />
+                    )}
+                  </button>
+                  
+                  {/* Attachment menu dropdown */}
+                  {showAttachMenu && (
+                    <div className="absolute bottom-full left-0 mb-2 bg-[#3a3a3a] rounded-xl border border-white/10 shadow-xl overflow-hidden min-w-[200px]">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left"
+                      >
+                        <Paperclip className="h-5 w-5 text-gray-400" />
+                        <div>
+                          <p className="text-sm text-white">Upload document</p>
+                          <p className="text-xs text-gray-500">PDF, DOC, TXT</p>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => imageInputRef.current?.click()}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left border-t border-white/5"
+                      >
+                        <ImageIcon className="h-5 w-5 text-gray-400" />
+                        <div>
+                          <p className="text-sm text-white">Upload image</p>
+                          <p className="text-xs text-gray-500">PNG, JPG, WEBP</p>
+                        </div>
+                      </button>
+                    </div>
+                  )}
+                </div>
 
-              {/* Text Input */}
-              <div className="flex-1">
-                <Textarea
+                {/* Hidden file inputs */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept=".pdf,.doc,.docx,.txt"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,.png,.jpg,.jpeg,.webp"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+
+                {/* Text input */}
+                <textarea
                   ref={textareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask your legal question here... (Press Enter to send, Shift+Enter for new line)"
-                  className="min-h-[60px] max-h-[200px] resize-none glass-light border-blue-500/30 text-gray-200 placeholder:text-gray-500 focus:border-blue-400/50 focus:ring-blue-500/20"
+                  placeholder="Ask anything about Indian law..."
+                  className="flex-1 bg-transparent text-white placeholder-gray-500 resize-none focus:outline-none py-2 px-2 max-h-[200px] min-h-[24px]"
+                  rows={1}
                   disabled={isLoading}
                 />
-              </div>
 
-              {/* Send Button */}
-              <Button
-                onClick={handleSend}
-                disabled={(!input.trim() && uploadedDocs.length === 0) || isLoading}
-                size="lg"
-                className="gradient-neon-blue text-white h-[60px] px-6 hover:shadow-lg hover:shadow-blue-500/50 hover-lift transition-all disabled:opacity-50"
-              >
-                {isLoading ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <Send className="h-5 w-5" />
-                )}
-              </Button>
+                {/* Voice input button */}
+                <button
+                  onClick={isListening ? stopListening : startListening}
+                  disabled={isLoading || !recognitionRef.current}
+                  className={cn(
+                    "p-2 rounded-full transition-colors",
+                    isListening
+                      ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                      : "hover:bg-white/10 text-gray-400"
+                  )}
+                >
+                  {isListening ? (
+                    <MicOff className="h-5 w-5" />
+                  ) : (
+                    <Mic className="h-5 w-5" />
+                  )}
+                </button>
+
+                {/* Send button */}
+                <button
+                  onClick={handleSend}
+                  disabled={(!input.trim() && uploadedDocs.length === 0) || isLoading}
+                  className={cn(
+                    "p-2 rounded-full transition-all",
+                    (input.trim() || uploadedDocs.length > 0) && !isLoading
+                      ? "bg-white text-black hover:bg-gray-200"
+                      : "bg-gray-600 text-gray-400 cursor-not-allowed"
+                  )}
+                >
+                  {isLoading ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <Send className="h-5 w-5" />
+                  )}
+                </button>
+              </div>
             </div>
-            <p className="text-xs text-gray-500 mt-2 text-center">
-              LexAI can respond in English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Gujarati, Punjabi, Marathi, and Urdu
-              {recognitionRef.current && " • Click microphone to speak"}
+
+            {/* Helper text */}
+            <p className="text-xs text-gray-500 text-center mt-3">
+              LexAI can make mistakes. Consider checking important legal information.
             </p>
           </div>
         </div>
-        </div>
-
-        {/* Document Analysis Section */}
-        <div className="w-full lg:w-96 flex flex-col lg:border-l border-t lg:border-t-0 border-blue-500/30 glass">
-          <div className="p-4 border-b border-blue-500/30">
-            <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
-              <FileText className="h-5 w-5 text-blue-400" />
-              Document Analysis
-              <Badge variant="outline" className="text-xs glass-light border-emerald-500/30 text-emerald-300">
-                OCR
-              </Badge>
-            </h3>
-            <p className="text-xs text-gray-400 mb-4">
-              Upload documents or images for AI-powered analysis with OCR
-            </p>
-            <input
-              ref={documentFileInputRef}
-              type="file"
-              accept=".txt,.docx,.pdf,.png,.jpg,.jpeg,.webp,image/*"
-              onChange={handleDocumentAnalysis}
-              className="hidden"
-            />
-            <Button
-              onClick={() => documentFileInputRef.current?.click()}
-              disabled={isAnalyzing}
-              className="w-full gradient-neon-blue text-white hover:shadow-lg hover:shadow-blue-500/50"
-            >
-              {isAnalyzing ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Analyzing...
-                </>
-              ) : (
-                <>
-                  <Upload className="h-4 w-4 mr-2" />
-                  Upload Document
-                </>
-              )}
-            </Button>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4">
-            {analysisError && (
-              <Card className="glass-card border-red-500/30 bg-red-500/10 p-4 mb-4">
-                <p className="text-red-400 text-sm">{analysisError}</p>
-              </Card>
-            )}
-
-            {documentAnalysis ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between mb-4">
-                  <Badge variant="outline" className="glass-light border-blue-500/30 text-blue-300">
-                    <FileText className="h-3 w-3 mr-1" />
-                    {analyzedFileName}
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setDocumentAnalysis(null)
-                      setAnalyzedFileName(null)
-                      setAnalysisError(null)
-                    }}
-                    className="text-gray-400 hover:text-white"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-                <div className="prose prose-sm max-w-none prose-invert">
-                  <ReactMarkdown
-                    components={{
-                      h1: ({ children }) => (
-                        <h1 className="text-xl font-bold text-white mb-2 neon-blue">{children}</h1>
-                      ),
-                      h2: ({ children }) => (
-                        <h2 className="text-lg font-bold text-white mb-2 mt-4 neon-blue">{children}</h2>
-                      ),
-                      h3: ({ children }) => (
-                        <h3 className="text-base font-bold text-blue-300 mb-2 mt-3">{children}</h3>
-                      ),
-                      p: ({ children }) => (
-                        <p className="text-gray-300 mb-3 leading-relaxed text-sm">{children}</p>
-                      ),
-                      ul: ({ children }) => (
-                        <ul className="list-disc list-inside mb-3 space-y-1 text-gray-300 text-sm">{children}</ul>
-                      ),
-                      ol: ({ children }) => (
-                        <ol className="list-decimal list-inside mb-3 space-y-1 text-gray-300 text-sm">{children}</ol>
-                      ),
-                      li: ({ children }) => (
-                        <li className="text-gray-300 text-sm">{children}</li>
-                      ),
-                      strong: ({ children }) => (
-                        <strong className="font-semibold text-white">{children}</strong>
-                      ),
-                      a: ({ href, children }) => (
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-400 hover:text-blue-300 underline"
-                        >
-                          {children}
-                        </a>
-                      ),
-                      hr: () => <hr className="my-4 border-blue-500/30" />,
-                      code: ({ children }) => (
-                        <code className="glass-light px-1 py-0.5 rounded text-xs text-blue-300">
-                          {children}
-                        </code>
-                      ),
-                      pre: ({ children }) => (
-                        <pre className="glass-light p-3 rounded overflow-x-auto mb-3 text-xs">
-                          {children}
-                        </pre>
-                      ),
-                    }}
-                  >
-                    {documentAnalysis}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                <div className="w-16 h-16 rounded-full glass-card flex items-center justify-center mb-4">
-                  <FileText className="h-8 w-8 text-blue-400" />
-                </div>
-                <p className="text-gray-400 text-sm mb-2">No document analyzed yet</p>
-                <p className="text-gray-500 text-xs mb-3">
-                  Upload documents or scanned images for AI analysis
-                </p>
-                <div className="flex flex-wrap justify-center gap-1">
-                  <Badge variant="outline" className="text-xs glass-light border-blue-500/20 text-gray-400">.pdf</Badge>
-                  <Badge variant="outline" className="text-xs glass-light border-blue-500/20 text-gray-400">.docx</Badge>
-                  <Badge variant="outline" className="text-xs glass-light border-blue-500/20 text-gray-400">.txt</Badge>
-                  <Badge variant="outline" className="text-xs glass-light border-blue-500/20 text-gray-400">.png</Badge>
-                  <Badge variant="outline" className="text-xs glass-light border-blue-500/20 text-gray-400">.jpg</Badge>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      </main>
     </div>
   )
 }

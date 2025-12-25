@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
 import mammoth from "mammoth"
-import { extractText } from "unpdf"
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY
 
-// Parse PDF using unpdf
-async function parsePDF(arrayBuffer: ArrayBuffer): Promise<string> {
-  const { text } = await extractText(arrayBuffer)
-  return Array.isArray(text) ? text.join("\n") : text
+// Dynamic import for pdf-parse to handle CommonJS module
+async function parsePDF(buffer: Buffer): Promise<string> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfParse = require("pdf-parse")
+    const data = await pdfParse(buffer)
+    return data.text || ""
+  } catch (error) {
+    console.error("PDF parse error:", error)
+    return ""
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -45,21 +51,26 @@ export async function POST(request: NextRequest) {
       // Handle .txt files
       documentText = await file.text()
     } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-      // Handle PDF files - extract text using PDF.js
+      // Handle PDF files - extract text using pdf-parse
       try {
         const arrayBuffer = await file.arrayBuffer()
-        documentText = await parsePDF(arrayBuffer)
+        const buffer = Buffer.from(arrayBuffer)
+        documentText = await parsePDF(buffer)
         
-        if (!documentText || documentText.trim().length < 50) {
+        // If no text extracted, try using vision API as fallback for scanned PDFs
+        if (!documentText || documentText.trim().length < 10) {
+          // Convert PDF to image-like handling for scanned documents
+          const fileBase64Temp = buffer.toString("base64")
+          // For scanned PDFs, we'll inform the user
           return NextResponse.json(
-            { error: "Could not extract text from PDF. The PDF may be image-based or encrypted. Please upload a text-based PDF or an image of the document." },
+            { error: "This appears to be a scanned PDF with no extractable text. Please upload the document as an image (PNG/JPG) for OCR processing, or upload a text-based PDF." },
             { status: 400 }
           )
         }
       } catch (error) {
         console.error("PDF parsing error:", error)
         return NextResponse.json(
-          { error: "Failed to parse PDF. Please try uploading an image of the document instead." },
+          { error: "Failed to parse PDF. Please try uploading as an image instead." },
           { status: 400 }
         )
       }
