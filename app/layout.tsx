@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "LegalAI - Free Legal Advice for Everyone | 24/7 AI Legal Advisor",
-  description: "Get instant legal guidance in any language. Free legal advice powered by GPT-5 AI. Understand your rights, solve legal problems, and navigate the system without expensive lawyers. Available 24/7.",
-  keywords: "legal advice, free legal help, AI legal advisor, legal consultation, legal guidance, legal assistance, GPT-5, multilingual legal support",
+  description: "Get instant legal guidance in any language. Free legal advice powered by OpenAI GPT-4o. Understand your rights, solve legal problems, and navigate the system without expensive lawyers. Available 24/7.",
+  keywords: "legal advice, free legal help, AI legal advisor, legal consultation, legal guidance, legal assistance, GPT-4o, multilingual legal support",
 };
 
 export default function RootLayout({

@@ -93,6 +93,13 @@ export default function ChatPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
+  
+  // Document analysis state
+  const [documentAnalysis, setDocumentAnalysis] = useState<string | null>(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [analyzedFileName, setAnalyzedFileName] = useState<string | null>(null)
+  const documentFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     // Auto-scroll to bottom when new messages arrive
@@ -197,6 +204,63 @@ export default function ChatPage() {
       reader.onerror = reject
       reader.readAsText(file)
     })
+  }
+
+  // Document analysis handler
+  const handleDocumentAnalysis = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    // Check file type
+    const validTypes = [
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "text/plain",
+      "application/pdf",
+      "image/png",
+      "image/jpeg",
+      "image/jpg",
+      "image/webp"
+    ]
+    const validExtensions = [".docx", ".txt", ".pdf", ".png", ".jpg", ".jpeg", ".webp"]
+    const isValidType = validTypes.includes(file.type) || 
+                       validExtensions.some(ext => file.name.toLowerCase().endsWith(ext))
+
+    if (!isValidType) {
+      setAnalysisError("Please upload a .txt, .docx, .pdf, or image file")
+      return
+    }
+
+    setIsAnalyzing(true)
+    setAnalysisError(null)
+    setDocumentAnalysis(null)
+    setAnalyzedFileName(file.name)
+
+    try {
+      const formData = new FormData()
+      formData.append("file", file)
+
+      const response = await fetch("/api/analyze-document", {
+        method: "POST",
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to analyze document")
+      }
+
+      const data = await response.json()
+      setDocumentAnalysis(data.analysis)
+    } catch (err) {
+      setAnalysisError(err instanceof Error ? err.message : "Failed to analyze document")
+      console.error("Document analysis error:", err)
+    } finally {
+      setIsAnalyzing(false)
+      // Clear file input
+      if (documentFileInputRef.current) {
+        documentFileInputRef.current.value = ""
+      }
+    }
   }
 
   const removeDocument = (id: string) => {
@@ -306,9 +370,9 @@ export default function ChatPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="glass-light border-blue-500/30 text-blue-300">
+              <Badge variant="outline" className="glass-light border-emerald-500/30 text-emerald-300">
                 <Sparkles className="h-3 w-3 mr-1 animate-pulse-glow" />
-                GPT-5 Powered
+                GPT-4o
               </Badge>
               {messages.length > 0 && (
                 <Button
@@ -326,9 +390,11 @@ export default function ChatPage() {
         </div>
       </header>
 
-      {/* Chat Area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto" ref={scrollAreaRef}>
+      {/* Main Content Area - Split Layout */}
+      <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
+        {/* Chat Section */}
+        <div className="flex-1 flex flex-col overflow-hidden lg:border-r border-blue-500/30">
+          <div className="flex-1 overflow-y-auto" ref={scrollAreaRef}>
           <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 max-w-4xl">
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full min-h-[60vh] text-center">
@@ -615,6 +681,148 @@ export default function ChatPage() {
               LexAI can respond in English, Hindi, Tamil, Telugu, Kannada, Malayalam, Bengali, Gujarati, Punjabi, Marathi, and Urdu
               {recognitionRef.current && " • Click microphone to speak"}
             </p>
+          </div>
+        </div>
+        </div>
+
+        {/* Document Analysis Section */}
+        <div className="w-full lg:w-96 flex flex-col lg:border-l border-t lg:border-t-0 border-blue-500/30 glass">
+          <div className="p-4 border-b border-blue-500/30">
+            <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2">
+              <FileText className="h-5 w-5 text-blue-400" />
+              Document Analysis
+              <Badge variant="outline" className="text-xs glass-light border-emerald-500/30 text-emerald-300">
+                OCR
+              </Badge>
+            </h3>
+            <p className="text-xs text-gray-400 mb-4">
+              Upload documents or images for AI-powered analysis with OCR
+            </p>
+            <input
+              ref={documentFileInputRef}
+              type="file"
+              accept=".txt,.docx,.pdf,.png,.jpg,.jpeg,.webp,image/*"
+              onChange={handleDocumentAnalysis}
+              className="hidden"
+            />
+            <Button
+              onClick={() => documentFileInputRef.current?.click()}
+              disabled={isAnalyzing}
+              className="w-full gradient-neon-blue text-white hover:shadow-lg hover:shadow-blue-500/50"
+            >
+              {isAnalyzing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload Document
+                </>
+              )}
+            </Button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4">
+            {analysisError && (
+              <Card className="glass-card border-red-500/30 bg-red-500/10 p-4 mb-4">
+                <p className="text-red-400 text-sm">{analysisError}</p>
+              </Card>
+            )}
+
+            {documentAnalysis ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between mb-4">
+                  <Badge variant="outline" className="glass-light border-blue-500/30 text-blue-300">
+                    <FileText className="h-3 w-3 mr-1" />
+                    {analyzedFileName}
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setDocumentAnalysis(null)
+                      setAnalyzedFileName(null)
+                      setAnalysisError(null)
+                    }}
+                    className="text-gray-400 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="prose prose-sm max-w-none prose-invert">
+                  <ReactMarkdown
+                    components={{
+                      h1: ({ children }) => (
+                        <h1 className="text-xl font-bold text-white mb-2 neon-blue">{children}</h1>
+                      ),
+                      h2: ({ children }) => (
+                        <h2 className="text-lg font-bold text-white mb-2 mt-4 neon-blue">{children}</h2>
+                      ),
+                      h3: ({ children }) => (
+                        <h3 className="text-base font-bold text-blue-300 mb-2 mt-3">{children}</h3>
+                      ),
+                      p: ({ children }) => (
+                        <p className="text-gray-300 mb-3 leading-relaxed text-sm">{children}</p>
+                      ),
+                      ul: ({ children }) => (
+                        <ul className="list-disc list-inside mb-3 space-y-1 text-gray-300 text-sm">{children}</ul>
+                      ),
+                      ol: ({ children }) => (
+                        <ol className="list-decimal list-inside mb-3 space-y-1 text-gray-300 text-sm">{children}</ol>
+                      ),
+                      li: ({ children }) => (
+                        <li className="text-gray-300 text-sm">{children}</li>
+                      ),
+                      strong: ({ children }) => (
+                        <strong className="font-semibold text-white">{children}</strong>
+                      ),
+                      a: ({ href, children }) => (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:text-blue-300 underline"
+                        >
+                          {children}
+                        </a>
+                      ),
+                      hr: () => <hr className="my-4 border-blue-500/30" />,
+                      code: ({ children }) => (
+                        <code className="glass-light px-1 py-0.5 rounded text-xs text-blue-300">
+                          {children}
+                        </code>
+                      ),
+                      pre: ({ children }) => (
+                        <pre className="glass-light p-3 rounded overflow-x-auto mb-3 text-xs">
+                          {children}
+                        </pre>
+                      ),
+                    }}
+                  >
+                    {documentAnalysis}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-center py-8">
+                <div className="w-16 h-16 rounded-full glass-card flex items-center justify-center mb-4">
+                  <FileText className="h-8 w-8 text-blue-400" />
+                </div>
+                <p className="text-gray-400 text-sm mb-2">No document analyzed yet</p>
+                <p className="text-gray-500 text-xs mb-3">
+                  Upload documents or scanned images for AI analysis
+                </p>
+                <div className="flex flex-wrap justify-center gap-1">
+                  <Badge variant="outline" className="text-xs glass-light border-blue-500/20 text-gray-400">.pdf</Badge>
+                  <Badge variant="outline" className="text-xs glass-light border-blue-500/20 text-gray-400">.docx</Badge>
+                  <Badge variant="outline" className="text-xs glass-light border-blue-500/20 text-gray-400">.txt</Badge>
+                  <Badge variant="outline" className="text-xs glass-light border-blue-500/20 text-gray-400">.png</Badge>
+                  <Badge variant="outline" className="text-xs glass-light border-blue-500/20 text-gray-400">.jpg</Badge>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

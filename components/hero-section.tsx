@@ -35,10 +35,10 @@ export function HeroSection() {
           <div className="flex justify-center mb-8 animate-fade-in">
             <Badge 
               variant="outline" 
-              className="px-4 py-1.5 text-sm glass-light border-blue-500/30 text-blue-300 hover:border-blue-400/50 hover-glow transition-all"
+              className="px-4 py-1.5 text-sm glass-light border-emerald-500/30 text-emerald-300 hover:border-emerald-400/50 hover-glow transition-all"
             >
-              <Sparkles className="h-3 w-3 mr-2 text-blue-400 animate-pulse-glow" />
-              Powered by GPT-5 • Available 24/7
+              <Sparkles className="h-3 w-3 mr-2 text-emerald-400 animate-pulse-glow" />
+              Powered by GPT-4o • Available 24/7
             </Badge>
           </div>
 

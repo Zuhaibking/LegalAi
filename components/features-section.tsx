@@ -28,7 +28,7 @@ const features = [
   {
     icon: Brain,
     title: "AI-Powered Intelligence",
-    description: "Powered by GPT-5, the most advanced AI model. Get accurate, contextual legal advice tailored to your specific situation.",
+    description: "Powered by OpenAI GPT-4o, one of the most advanced AI models. Get accurate, contextual legal advice tailored to your specific situation.",
     iconColor: "text-blue-600",
     iconBg: "bg-blue-50"
   },

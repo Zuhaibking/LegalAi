@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY
+
 export async function POST(request: NextRequest) {
   try {
     const { messages } = await request.json()
@@ -11,12 +13,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const endpoint = process.env.AZURE_OPENAI_ENDPOINT
-    const apiKey = process.env.AZURE_OPENAI_API_KEY
-
-    if (!endpoint || !apiKey) {
+    if (!OPENAI_API_KEY) {
       return NextResponse.json(
-        { error: "Azure OpenAI configuration is missing" },
+        { error: "OpenAI API configuration is missing" },
         { status: 500 }
       )
     }
@@ -114,27 +113,29 @@ You can:
     }
 
     // Prepend system message to the conversation
-    const conversationMessages = [systemMessage, ...messages]
+    const openaiMessages = [systemMessage, ...messages.map((msg: { role: string; content: string }) => ({
+      role: msg.role,
+      content: msg.content
+    }))]
 
-    const response = await fetch(endpoint, {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "api-key": apiKey,
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        messages: conversationMessages,
+        model: "gpt-4o-mini",
+        messages: openaiMessages,
         temperature: 0.7,
-        max_tokens: 4000,
+        max_tokens: 4096,
         top_p: 0.95,
-        frequency_penalty: 0,
-        presence_penalty: 0,
       }),
     })
 
     if (!response.ok) {
       const errorData = await response.text()
-      console.error("Azure OpenAI API error:", errorData)
+      console.error("OpenAI API error:", errorData)
       return NextResponse.json(
         { error: "Failed to get response from AI" },
         { status: response.status }
@@ -144,6 +145,7 @@ You can:
     const data = await response.json()
 
     if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+      console.error("Invalid OpenAI response:", data)
       return NextResponse.json(
         { error: "Invalid response format from AI" },
         { status: 500 }
