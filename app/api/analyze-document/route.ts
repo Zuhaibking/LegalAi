@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import mammoth from "mammoth"
+import { createRequire } from "node:module"
+
+const require = createRequire(import.meta.url)
+const pdfParse = require("pdf-parse")
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY
 
@@ -38,15 +42,28 @@ export async function POST(request: NextRequest) {
       // Handle .txt files
       documentText = await file.text()
     } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-      // For PDFs, we'll try to extract text first, then use vision if needed
-      // Since we removed pdf-parse, we'll use vision API for PDFs
-      const arrayBuffer = await file.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
-      fileBase64 = buffer.toString("base64")
-      mimeType = "application/pdf"
-      useVisionAPI = true
+      // Handle PDF files - extract text using pdf-parse
+      try {
+        const arrayBuffer = await file.arrayBuffer()
+        const buffer = Buffer.from(arrayBuffer)
+        const pdfData = await pdfParse(buffer)
+        documentText = pdfData.text
+        
+        if (!documentText || documentText.trim().length < 50) {
+          return NextResponse.json(
+            { error: "Could not extract text from PDF. The PDF may be image-based or encrypted. Please upload a text-based PDF or an image of the document." },
+            { status: 400 }
+          )
+        }
+      } catch (error) {
+        console.error("PDF parsing error:", error)
+        return NextResponse.json(
+          { error: "Failed to parse PDF. Please try uploading an image of the document instead." },
+          { status: 400 }
+        )
+      }
     } else if (file.type.startsWith("image/")) {
-      // Handle image files with OCR
+      // Handle image files with OCR via GPT-4o vision
       const arrayBuffer = await file.arrayBuffer()
       const buffer = Buffer.from(arrayBuffer)
       fileBase64 = buffer.toString("base64")
