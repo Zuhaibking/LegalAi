@@ -7,7 +7,8 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY
 async function parsePDF(buffer: Buffer): Promise<string> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pdfParse = require("pdf-parse")
+    const pdfParseModule = require("pdf-parse")
+    const pdfParse = pdfParseModule.default || pdfParseModule
     const data = await pdfParse(buffer)
     return data.text || ""
   } catch (error) {
